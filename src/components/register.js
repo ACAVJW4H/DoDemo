@@ -11,10 +11,11 @@ import { registerUser, clearDisplayData } from '../actions';
 import UserRegister from './user-register';
 
 // material-ui components
-import TextField from 'material-ui/TextField';
-import RaisedButton from 'material-ui/RaisedButton';
-import RefreshIndicator from 'material-ui/RefreshIndicator';
-
+import TextField from '@material-ui/core/TextField';
+import Button from '@material-ui/core/Button';
+import CircularProgress from '@material-ui/core/CircularProgress';
+import Websocket from 'react-websocket';
+import { Divider } from 'material-ui';
 // loader styling
 const style = {
     container: {
@@ -36,48 +37,27 @@ class Register extends Component {
 
         this.state = {
             username: '',
-            load: false
+            load: false,
+            image: ''
         };
+        this.defaultTok = 1;
+        this.defaultNumNulls = 20;
+        this.people = [];
+        this.images = {};
+        this.defaultPerson = -1;
+        this.training = false;
+        //onOpen
+        this.sentTimes = [];
+        this.receivedTimes = [];
+        this.tok = this.defaultTok;
+        this.numNulls = 0
     }
 
     componentDidMount() {
         this.props.clearDisplayData();
     }
 
-    setRef = (webcam) => {
-        this.webcam = webcam;
-    }
 
-    capture = () => {
-
-        if (this.state.username === '' || this.state.username === ' ') {
-            alert('Username cannot be empty');
-            return;
-        }
-
-        this.setState({
-            load: true
-        });
-
-        const imageSrc = this.webcam.getScreenshot();
-
-        axios.post(`https://api.kairos.com/enroll`, {
-            gallery_name: 'newCameriaGallery',
-            image: imageSrc,
-            subject_id: this.state.username
-        }, {
-                headers: {
-                    app_id: <enter app id here>,
-                    app_key: <enter app key here>
-                }
-            }).then((response) => {
-                console.log(response);
-                this.props.registerUser(response.data);
-                this.setState({
-                    load: false
-                });
-            });
-    }
 
     resetGallery = () => {
 
@@ -85,20 +65,11 @@ class Register extends Component {
             load: true
         });
 
-        axios.post(`https://api.kairos.com/gallery/remove`, {
-            gallery_name: "newCameriaGallery"
-        }, {
-                headers: {
-                    app_id: <enter app id here>,
-                    app_key: <enter app key here>
-                }
-            }).then((response) => {
-                alert('Gallery has been reset. Feel free to register now');
-                this.setState({
-                    load: false
-                });
-            });
     }
+    setRef = (webcam) => {
+        this.webcam = webcam;
+    }
+
 
     handleUsername(e) {
         this.setState({
@@ -106,42 +77,181 @@ class Register extends Component {
         });
     }
 
+
+    /*updateIdentity(hash, idx) {
+        var imgIdx = findImageByHash(hash);
+        if (imgIdx >= 0) {
+            this.images[imgIdx].identity = idx;
+            var msg = {
+                'type': 'UPDATE_IDENTITY',
+                'hash': hash,
+                'idx': idx
+            };
+            this.refWebSocket.sendMessage(JSON.stringify(msg));
+        }
+    }*/
+
+    addPerson() {
+        this.defaultPerson = this.people.length;
+
+        if (this.state.username === '' || this.state.username === ' ') {
+            alert('Kullanıcı ismi boş olamaz');
+            return;
+        }
+
+        this.setState({
+            load: true
+        });
+        this.people.push(this.state.username);
+
+        var msg = {
+            'type': 'ADD_PERSON',
+            'val': this.state.username,
+            'id': this.defaultPerson
+        };
+        this.refWebSocket.sendMessage(JSON.stringify(msg));
+        this.trainingPerson(true);
+    }
+    trainingPerson(training) {
+        if (!training)
+            this.defaultPerson = -1;
+        var msg = {
+            'type': 'TRAINING',
+            'val': training
+        };
+        this.refWebSocket.sendMessage(JSON.stringify(msg));
+        //TODO Carry over Redux and Persist on Database
+        if (training)
+            setTimeout(function () { this.trainingPerson(false) }.bind(this), 10000);
+    }
+
+    sendFrameLoop() {
+        if (this.tok > 0) {
+            const imageSrc = this.webcam.getScreenshot();
+
+            var msg = {
+                'type': 'FRAME',
+                'dataURL': imageSrc,
+                'identity': this.defaultPerson
+            };
+            console.log(msg)
+            this.refWebSocket.sendMessage(JSON.stringify(msg));
+            this.tok--;
+        }
+        setTimeout(function () { this.sendFrameLoop() }.bind(this), 200);
+    }
+    sendState() {
+        var msg = {
+            'type': 'ALL_STATE',
+            'images': this.images,
+            'people': this.people,
+            'training': this.training
+        };
+        this.refWebSocket.sendMessage(JSON.stringify(msg));
+    }
+    handleData(data) {
+        console.log(data)
+        const j = JSON.parse(data)
+        if (j.type == "NULL") {
+            this.receivedTimes.push(new Date());
+            this.numNulls++;
+            if (this.numNulls == this.defaultNumNulls) {
+                this.sendState();
+                this.sendFrameLoop();
+            } else {
+                console.log("type null")
+                this.refWebSocket.sendMessage(JSON.stringify({ 'type': 'NULL' }));
+                this.sentTimes.push(new Date());
+            }
+        } else if (j.type == "PROCESSED") {
+            this.tok++;
+        } else if (j.type == "NEW_IMAGE") {
+            console.log("new Images");
+            //TODO Set this and redrawPoeple
+            /*this.images.push({
+                hash: j.hash,
+                identity: j.identity,
+                image: getDataURLFromRGB(j.content),
+                representation: j.representation
+            });*/
+            //this.redrawPeople();
+        } else if (j.type == "IDENTITIES") {
+            //TODO SET THis to State
+            var h = "Last updated: " + (new Date()).toTimeString();
+            h += "<ul>";
+            var len = j.identities.length
+            if (len > 0) {
+                for (var i = 0; i < len; i++) {
+                    var identity = "Unknown";
+                    var idIdx = j.identities[i];
+                    if (idIdx != -1) {
+                        identity = this.people[idIdx];
+                    }
+                    h += "<li>" + identity + "</li>";
+                }
+            } else {
+                h += "<li>Nobody detected.</li>";
+            }
+            h += "</ul>"
+        } else if (j.type == "ANNOTATED") {
+            this.setState({ image: j['content'] });
+        } else {
+            console.log("Unrecognized message type: " + j.type);
+        }
+    }
+    handleOpen() {
+        console.log("connected:)");
+        this.sentTimes = [];
+        this.receivedTimes = [];
+        this.tok = this.defaultTok;
+        this.numNulls = 0
+
+        this.refWebSocket.sendMessage(JSON.stringify({'type': 'NULL'}));
+        this.sentTimes.push(new Date());
+    }
+    handleClose() {
+        console.log("disconnected:(");
+    }
+
+    sendMessage(message) {
+        console.log("send ms");
+        this.refWebSocket.sendMessage(message);
+    }
     render() {
         return (
             <Grid fluid>
                 <Row>
                     <Col xs={12} md={4} mdOffset={4}>
                         <div style={{ 'textAlign': 'center' }}>
-                            <h3>REGISTER FACE</h3>
                             <Webcam
                                 audio={false}
-                                height={320}
+                                height={480}
                                 ref={this.setRef}
-                                screenshotFormat="image/png"
-                                width={320}
+                                screenshotFormat="image/jpeg"
+                                width={640}
+                                style={{visibility:"hidden",height:0}}
                             />
+                            <img src="http://localhost:8000"/>
+                            <img src={this.state.image} />
                             <br />
                             <div style={{ 'margin': '0 auto!important' }}>
                                 <TextField
-                                    hintText="provide identification name"
-                                    floatingLabelText="Username"
+                                    hintText="Kişi bilgilerini giriniz"
+                                    floatingLabelText="Kullanıcı Adı"
                                     onChange={(event) => this.handleUsername(event)}
                                 />
                             </div>
                             <br />
-                            <RefreshIndicator
-                                className='css-loader'
-                                size={80}
-                                left={70}
-                                top={0}
-                                loadingColor="#ADD8E6"
-                                status="loading"
-                                style={(this.state.load === false) ? style.hide : style.refresh}
-                            />
-                            <br />
-                            <RaisedButton className='register-button' onClick={this.capture} label="REGISTER" primary={true} style={{ 'margin': 16 }} />
-                            <RaisedButton className='register-button' onClick={this.resetGallery} label="RESET GALLERY" primary={true} style={{ 'margin': 16 }} />
-                            <UserRegister detect={this.props.regData} />
+
+                            <Button className='register-button' onClick={this.capture} label="REGISTER" primary={true} style={{ 'margin': 16 }}>Register</Button>
+                            <Button className='register-button' onClick={this.resetGallery}  primary={true} style={{ 'margin': 16 }}>RESET GALLERY</Button>
+                            <Websocket url='ws://localhost:9000' onMessage={this.handleData.bind(this)}
+                                onOpen={this.handleOpen.bind(this)} onClose={this.handleClose.bind(this)}
+                                reconnect={true} debug={false}
+                                ref={Websocket => {
+                                    this.refWebSocket = Websocket;
+                                }} />
+
                         </div>
                     </Col>
                 </Row>

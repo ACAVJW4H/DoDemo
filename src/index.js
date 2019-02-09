@@ -4,8 +4,6 @@ import './index.css';
 import App from './App';
 import registerServiceWorker from './registerServiceWorker';
 
-import MuiThemeProvider from 'material-ui/styles/MuiThemeProvider';
-
 import { BrowserRouter, Route } from 'react-router-dom';
 
 import { createStore, applyMiddleware } from 'redux';
@@ -23,9 +21,8 @@ ReactDOM.render(
     <Provider store={store}>
         <BrowserRouter>
             <div>
-                <MuiThemeProvider>
-                    <Route path='/' component={App} />
-                </MuiThemeProvider>
+                <div class="relative"><img src="/StromaLogoTransparent.png" height="96px" width="175px"></img> </div>
+                <Route path='/' component={App} />
             </div>
         </BrowserRouter>
     </Provider>
